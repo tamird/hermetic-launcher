@@ -45,8 +45,14 @@ def main():
         releases = json.loads(fetch(
             f"https://api.github.com/repos/{args.repo}/releases?per_page=30", token))
         candidates = sorted(
-            [r for r in releases if r["tag_name"].startswith(TAG_PREFIX)],
-            key=lambda r: r["tag_name"],
+            [
+                r for r in releases
+                if re.fullmatch(r"binaries-\d{8}(?:-\d+)?", r["tag_name"])
+            ],
+            key=lambda r: tuple(
+                int(part)
+                for part in r["tag_name"][len(TAG_PREFIX):].split("-")
+            ),
             reverse=True,
         )
         if not candidates:
