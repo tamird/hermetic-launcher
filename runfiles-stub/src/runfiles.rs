@@ -12,6 +12,7 @@ use crate::platform;
 
 pub struct Runfiles {
     manifest: Option<Manifest>,
+    physical_dir_path: Option<String>,
     // Paths for environment variables (when export_runfiles_env is true)
     pub manifest_path: Option<String>, // RUNFILES_MANIFEST_FILE
     pub dir_path: Option<String>,      // RUNFILES_DIR and JAVA_RUNFILES
@@ -21,8 +22,9 @@ impl Runfiles {
     pub fn create(rt: &platform::RuntimeArgs) -> Option<Self> {
         let mut manifest = None;
         let mut manifest_path = None;
-        let mut dir_path = platform::get_env_var(b"RUNFILES_DIR")
+        let mut physical_dir_path = platform::get_env_var(b"RUNFILES_DIR")
             .filter(|path| !path.is_empty() && path_exists(path));
+        let mut dir_path = physical_dir_path.clone();
 
         if let Some(env_manifest_path) = platform::get_env_var(b"RUNFILES_MANIFEST_FILE") {
             if !env_manifest_path.is_empty() {
@@ -30,22 +32,27 @@ impl Runfiles {
                 path_with_null.push(0);
 
                 if let Some(loaded_manifest) = platform::load_manifest(&path_with_null) {
-                    if dir_path.is_none() {
+                    if physical_dir_path.is_none() {
                         if let Some(candidate) = runfiles_dir_from_manifest(&env_manifest_path) {
                             if path_exists(&candidate) {
-                                dir_path = Some(candidate);
+                                physical_dir_path = Some(candidate);
                             }
                         }
                     }
                     manifest = Some(loaded_manifest);
                     manifest_path = Some(env_manifest_path);
+                    // Preserve manifest-mode propagation. The physical directory
+                    // supplements this launcher's lookups, but a child may need
+                    // manifest entries absent from a sparse runfiles tree.
+                    dir_path = None;
                 }
             }
         }
 
-        if manifest.is_some() || dir_path.is_some() {
+        if manifest.is_some() || physical_dir_path.is_some() {
             return Some(Self {
                 manifest,
+                physical_dir_path,
                 manifest_path,
                 dir_path,
             });
@@ -70,18 +77,20 @@ impl Runfiles {
                 let dir_exists = path_exists(&runfiles_dir);
                 if manifest.is_some() || dir_exists {
                     let has_manifest = manifest.is_some();
+                    let physical_dir_path = if dir_exists {
+                        Some(runfiles_dir)
+                    } else {
+                        None
+                    };
                     return Some(Self {
                         manifest,
+                        physical_dir_path: physical_dir_path.clone(),
                         manifest_path: if has_manifest {
                             Some(manifest_file_path)
                         } else {
                             None
                         },
-                        dir_path: if dir_exists {
-                            Some(runfiles_dir)
-                        } else {
-                            None
-                        },
+                        dir_path: physical_dir_path,
                     });
                 }
             }
@@ -102,13 +111,13 @@ impl Runfiles {
         if let Some(manifest) = &self.manifest {
             return resolve_manifest(manifest, path);
         }
-        self.dir_path
+        self.physical_dir_path
             .as_ref()
             .map(|dir| join_runfiles_path(dir, path))
     }
 
     pub fn directory_rlocation(&self, path: &str) -> Option<String> {
-        let result = join_runfiles_path(self.dir_path.as_ref()?, path);
+        let result = join_runfiles_path(self.physical_dir_path.as_ref()?, path);
         path_exists(&result).then_some(result)
     }
 

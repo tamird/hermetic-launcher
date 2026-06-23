@@ -636,8 +636,10 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     )?;
 
     // Bazel commonly exports only the manifest path. Its conventional sibling
-    // runfiles directory must still be preferred when the requested entry exists.
+    // runfiles directory must still be preferred for this launch, without being
+    // exported to a child that may need manifest-only entries.
     let (stdout, stderr, exit_code) = run_stub(&stub_path, &runfiles, &[], true)?;
+    #[cfg(windows)]
     let expected_dir = format!("ENV:RUNFILES_DIR={}", runfiles.runfiles_dir.display());
     let expected_manifest = format!(
         "ENV:RUNFILES_MANIFEST_FILE={}",
@@ -645,7 +647,8 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     );
     if exit_code != 0
         || !stdout.contains("ARGC:3")
-        || !stdout.contains(&expected_dir)
+        || !stdout.contains("ENV:RUNFILES_DIR=<unset>")
+        || !stdout.contains("ENV:JAVA_RUNFILES=<unset>")
         || !stdout.contains(&expected_manifest)
     {
         return Err(format!(
@@ -665,7 +668,8 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success()
         || !stdout.contains("ARGC:3")
-        || !stdout.contains(&expected_dir)
+        || !stdout.contains("ENV:RUNFILES_DIR=<unset>")
+        || !stdout.contains("ENV:JAVA_RUNFILES=<unset>")
         || !stdout.contains(&expected_manifest)
     {
         return Err(format!(
@@ -717,7 +721,8 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success()
         || !stdout.contains("ARGC:3")
-        || !stdout.contains("ENV:RUNFILES_DIR=.")
+        || !stdout.contains("ENV:RUNFILES_DIR=<unset>")
+        || !stdout.contains("ENV:JAVA_RUNFILES=<unset>")
         || !stdout.contains("ENV:RUNFILES_MANIFEST_FILE=MANIFEST")
     {
         return Err(format!(
