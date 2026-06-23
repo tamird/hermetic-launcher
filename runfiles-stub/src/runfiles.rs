@@ -111,6 +111,14 @@ impl Runfiles {
         let result = join_runfiles_path(self.dir_path.as_ref()?, path);
         path_exists(&result).then_some(result)
     }
+
+    pub fn argv0_rlocation(&self, path: &str) -> Option<String> {
+        if let Some(path) = self.directory_rlocation(path) {
+            return Some(path);
+        }
+        let dir = runfiles_dir_from_manifest(self.manifest_path.as_deref()?)?;
+        Some(join_runfiles_path(&dir, path))
+    }
 }
 
 fn join_runfiles_path(dir: &str, path: &str) -> String {
