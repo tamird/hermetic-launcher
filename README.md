@@ -150,17 +150,16 @@ are limited only by the target operating system's process invocation constraints
 
 ### Runfiles discovery
 
-At startup the finalized launcher locates runfiles in this order:
+At startup the finalized launcher discovers runfiles from:
 
-1. `$RUNFILES_MANIFEST_FILE`
-2. `$RUNFILES_DIR`
-3. `<executable>.runfiles_manifest`
-4. `<executable>.runfiles/`
+1. `$RUNFILES_DIR` and `$RUNFILES_MANIFEST_FILE`
+2. `<executable>.runfiles/` and `<executable>.runfiles_manifest`
 
-Each argument marked `--transform` is resolved through runfiles (manifest lookup or
-directory join; tree-artifact prefixes supported). Without a fallback, absolute paths
-(leading `/`) pass through unchanged. The launcher then appends its own runtime
-arguments and replaces itself with the target.
+When a manifest has a conventional sibling runfiles directory, the launcher discovers
+that directory as well. Each argument marked `--transform` uses an existing directory
+entry first, then falls back to the manifest (including tree-artifact prefixes).
+Without a fallback, absolute paths pass through unchanged. The launcher then appends
+its own runtime arguments and replaces itself with the target.
 
 For an argument with `--fallback N=PATH`, the runfiles result wins only when it
 exists. Otherwise the launcher joins `PATH` to the parent of its OS-reported

@@ -220,29 +220,21 @@ pub fn main(rt: platform::RuntimeArgs) -> ! {
         resolved.push(resolved_arg);
     }
 
-    // Preserve argv[0] as a runfiles-relative path when runfiles selected the
-    // executable. Adjacent manifest discovery also records its logical
-    // <launcher>.runfiles directory so tools can walk that path to locate the
-    // runfiles tree even when the manifest maps execution to another location.
-    // A fallback must instead use its fully resolved executable path.
+    // Preserve argv[0] as a directory-runfiles path when that entry won
+    // resolution. A manifest-only result or executable-relative fallback must
+    // instead retain its fully resolved executable path.
     let argv0_override: Option<Vec<u8>> = if arg0_from_runfiles {
-        runfiles
-            .as_ref()
-            .and_then(|rf| rf.dir_path.as_deref())
-            .and_then(|dir| {
-                let arg0 = placeholders::arg(0);
-                let arg0_len = cstr_len(arg0);
-                if arg0_len == 0 {
-                    return None;
-                }
-                let mut path = Vec::from(dir.as_bytes());
-                if !dir.ends_with('/') {
-                    path.push(b'/');
-                }
-                path.extend_from_slice(&arg0[..arg0_len]);
-                path.push(0);
-                Some(path)
-            })
+        runfiles.as_ref().and_then(|rf| {
+            let arg0 = placeholders::arg(0);
+            let arg0_len = cstr_len(arg0);
+            if arg0_len == 0 {
+                return None;
+            }
+            let arg0 = core::str::from_utf8(&arg0[..arg0_len]).ok()?;
+            let mut path = Vec::from(rf.directory_rlocation(arg0)?.as_bytes());
+            path.push(0);
+            Some(path)
+        })
     } else {
         None
     };

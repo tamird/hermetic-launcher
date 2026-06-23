@@ -206,7 +206,9 @@ impl RunfilesSetup {
     /// Create a new runfiles setup in the given directory
     fn new(base_dir: &Path, name: &str) -> std::io::Result<Self> {
         let runfiles_dir = base_dir.join(format!("{}.runfiles", name));
-        let manifest_path = base_dir.join(format!("{}.runfiles_manifest", name));
+        // Keep manifest-only tests independent from the sibling runfiles tree.
+        // Tests of Bazel's conventional sibling names opt in explicitly.
+        let manifest_path = base_dir.join(format!("{}.manifest", name));
 
         fs::create_dir_all(&runfiles_dir)?;
 
@@ -578,6 +580,119 @@ fn test_add_numbers_runtime_args(config: &TestConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// Test: a physical runfiles entry takes precedence over a conflicting manifest,
+/// while the manifest remains a per-entry fallback for an incomplete directory.
+fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
+    println!("  Running test: directory_precedes_manifest");
+
+    let test_dir = config.work_dir.join("test_directory_precedes_manifest");
+    fs::create_dir_all(&test_dir).map_err(|e| format!("Failed to create test dir: {}", e))?;
+
+    let mut runfiles = RunfilesSetup::new(&test_dir, "precedence_stub")
+        .map_err(|e| format!("Failed to create runfiles: {}", e))?;
+    runfiles.manifest_path = test_dir.join("precedence_stub.runfiles_manifest");
+    let executable_rlocation = format!("{}/bin/tool{}", WORKSPACE_NAME, EXE_EXT);
+    let print_env_binary = config.test_binaries_dir.join(format!("print-env{}", EXE_EXT));
+    runfiles
+        .add_file(&executable_rlocation, &print_env_binary)
+        .map_err(|e| format!("Failed to add directory executable: {}", e))?;
+
+    let add_binary = config.test_binaries_dir.join(format!("add-numbers{}", EXE_EXT));
+    let manifest_target = add_binary.to_string_lossy();
+    #[cfg(windows)]
+    let manifest_target = manifest_target.replace('\\', "/");
+    fs::write(
+        &runfiles.manifest_path,
+        format!("{} {}\n", executable_rlocation, manifest_target),
+    )
+    .map_err(|e| format!("Failed to write conflicting manifest: {}", e))?;
+
+    let stub_path = test_dir.join(format!("precedence_stub{}", EXE_EXT));
+    finalize_stub(
+        config,
+        &stub_path,
+        &[&executable_rlocation, "7", "8"],
+        &[0],
+    )?;
+
+    // Bazel commonly exports only the manifest path. Its conventional sibling
+    // runfiles directory must still be preferred when the requested entry exists.
+    let (stdout, stderr, exit_code) = run_stub(&stub_path, &runfiles, &[], true)?;
+    let expected_dir = format!("ENV:RUNFILES_DIR={}", runfiles.runfiles_dir.display());
+    let expected_manifest = format!(
+        "ENV:RUNFILES_MANIFEST_FILE={}",
+        runfiles.manifest_path.display()
+    );
+    if exit_code != 0
+        || !stdout.contains("ARGC:3")
+        || !stdout.contains(&expected_dir)
+        || !stdout.contains(&expected_manifest)
+    {
+        return Err(format!(
+            "Sibling runfiles directory did not win over manifest.\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        ));
+    }
+
+    let mut command = Command::new(&stub_path);
+    command
+        .env("RUNFILES_DIR", &runfiles.runfiles_dir)
+        .env("RUNFILES_MANIFEST_FILE", &runfiles.manifest_path);
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to run stub with both runfiles variables: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        || !stdout.contains("ARGC:3")
+        || !stdout.contains(&expected_dir)
+        || !stdout.contains(&expected_manifest)
+    {
+        return Err(format!(
+            "Explicit runfiles directory did not win over manifest.\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        ));
+    }
+
+    let in_tree_manifest = runfiles.runfiles_dir.join("MANIFEST");
+    fs::copy(&runfiles.manifest_path, &in_tree_manifest)
+        .map_err(|e| format!("Failed to create in-tree MANIFEST: {}", e))?;
+    let mut command = Command::new(&stub_path);
+    command
+        .current_dir(&runfiles.runfiles_dir)
+        .env_remove("RUNFILES_DIR")
+        .env_remove("JAVA_RUNFILES")
+        .env("RUNFILES_MANIFEST_FILE", "MANIFEST");
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to run stub with bare MANIFEST: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        || !stdout.contains("ARGC:3")
+        || !stdout.contains("ENV:RUNFILES_DIR=.")
+        || !stdout.contains("ENV:RUNFILES_MANIFEST_FILE=MANIFEST")
+    {
+        return Err(format!(
+            "Bare MANIFEST did not select its current-directory runfiles.\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        ));
+    }
+
+    fs::remove_file(runfiles.get_path(&executable_rlocation).unwrap())
+        .map_err(|e| format!("Failed to remove directory executable: {}", e))?;
+    let (stdout, stderr, exit_code) = run_stub(&stub_path, &runfiles, &[], true)?;
+    if exit_code != 0 || !stdout.contains("SUM:15") {
+        return Err(format!(
+            "Manifest did not supply a missing directory entry.\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        ));
+    }
+
+    println!("    PASS (directory preference with manifest fallback)");
+    Ok(())
+}
+
 /// Test: merge-json with two data files
 fn test_merge_json(config: &TestConfig) -> Result<(), String> {
     println!("  Running test: merge_json");
@@ -863,7 +978,7 @@ fn test_fallback_runfiles_manifest(config: &TestConfig) -> Result<(), String> {
     let test_dir = config.work_dir.join("test_fallback_manifest");
     fs::create_dir_all(&test_dir).map_err(|e| format!("Failed to create test dir: {}", e))?;
 
-    // Create a stub with a .runfiles_manifest file next to it (not a directory)
+    // Create a stub with only a .runfiles_manifest file next to it.
     let stub_path = test_dir.join(format!("manifest_stub{}", EXE_EXT));
     let manifest_path = test_dir.join(format!("manifest_stub{}.runfiles_manifest", EXE_EXT));
 
@@ -2163,6 +2278,7 @@ fn main() -> ExitCode {
     let tests: Vec<(&str, fn(&TestConfig) -> Result<(), String>)> = vec![
         ("hash_file", test_hash_file),
         ("add_numbers_runtime_args", test_add_numbers_runtime_args),
+        ("directory_precedes_manifest", test_directory_precedes_manifest),
         ("merge_json", test_merge_json),
         ("orchestrator_env_propagation", test_orchestrator_env_propagation),
         ("mixed_arguments", test_mixed_arguments),

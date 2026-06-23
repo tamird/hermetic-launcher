@@ -10,13 +10,8 @@ use alloc::vec::Vec;
 use crate::common::{cstr_len, Manifest};
 use crate::platform;
 
-pub enum RunfilesMode {
-    ManifestBased(Manifest),
-    DirectoryBased(String),
-}
-
 pub struct Runfiles {
-    mode: RunfilesMode,
+    manifest: Option<Manifest>,
     // Paths for environment variables (when export_runfiles_env is true)
     pub manifest_path: Option<String>, // RUNFILES_MANIFEST_FILE
     pub dir_path: Option<String>,      // RUNFILES_DIR and JAVA_RUNFILES
@@ -24,69 +19,69 @@ pub struct Runfiles {
 
 impl Runfiles {
     pub fn create(rt: &platform::RuntimeArgs) -> Option<Self> {
-        // Try RUNFILES_MANIFEST_FILE first
-        if let Some(manifest_path) = platform::get_env_var(b"RUNFILES_MANIFEST_FILE") {
-            if !manifest_path.is_empty() {
-                // Create null-terminated path for load_manifest
-                let mut path_with_null = Vec::from(manifest_path.as_bytes());
+        let mut manifest = None;
+        let mut manifest_path = None;
+        let mut dir_path = platform::get_env_var(b"RUNFILES_DIR")
+            .filter(|path| !path.is_empty() && path_exists(path));
+
+        if let Some(env_manifest_path) = platform::get_env_var(b"RUNFILES_MANIFEST_FILE") {
+            if !env_manifest_path.is_empty() {
+                let mut path_with_null = Vec::from(env_manifest_path.as_bytes());
                 path_with_null.push(0);
 
-                if let Some(manifest) = platform::load_manifest(&path_with_null) {
-                    return Some(Self {
-                        mode: RunfilesMode::ManifestBased(manifest),
-                        manifest_path: Some(manifest_path),
-                        dir_path: None,
-                    });
+                if let Some(loaded_manifest) = platform::load_manifest(&path_with_null) {
+                    if dir_path.is_none() {
+                        if let Some(candidate) = runfiles_dir_from_manifest(&env_manifest_path) {
+                            if path_exists(&candidate) {
+                                dir_path = Some(candidate);
+                            }
+                        }
+                    }
+                    manifest = Some(loaded_manifest);
+                    manifest_path = Some(env_manifest_path);
                 }
             }
         }
 
-        // Try RUNFILES_DIR
-        if let Some(runfiles_dir) = platform::get_env_var(b"RUNFILES_DIR") {
-            if !runfiles_dir.is_empty() {
-                return Some(Self {
-                    mode: RunfilesMode::DirectoryBased(runfiles_dir.clone()),
-                    manifest_path: None,
-                    dir_path: Some(runfiles_dir),
-                });
-            }
+        if manifest.is_some() || dir_path.is_some() {
+            return Some(Self {
+                manifest,
+                manifest_path,
+                dir_path,
+            });
         }
 
         // Locate runfiles next to the launching executable:
-        // <executable>.runfiles_manifest file first (preferred), then
-        // <executable>.runfiles directory. The executable path comes from the OS
-        // (an absolute, non-symlink-resolved launch path), not from argv[0].
+        // <executable>.runfiles_manifest and <executable>.runfiles. The executable
+        // path comes from the OS (an absolute, non-symlink-resolved launch path),
+        // not from argv[0].
         if let Some(exe_path) = rt.executable_path() {
             let exe_len = cstr_len(&exe_path);
             if exe_len > 0 {
                 // Convert the executable path to a string (if valid UTF-8).
                 let exe_str = core::str::from_utf8(&exe_path[..exe_len]).ok()?;
+                let runfiles_dir = String::from(exe_str) + ".runfiles";
 
-                // Try <executable>.runfiles_manifest file first
                 let manifest_file_path = String::from(exe_str) + ".runfiles_manifest";
-
-                // Add null terminator for the file open
                 let mut manifest_path_with_null = Vec::from(manifest_file_path.as_bytes());
                 manifest_path_with_null.push(0);
 
-                if let Some(manifest) = platform::load_manifest(&manifest_path_with_null) {
-                    // Also determine the runfiles directory for RUNFILES_DIR envvar
-                    let dir_path = String::from(exe_str) + ".runfiles";
-
+                let manifest = platform::load_manifest(&manifest_path_with_null);
+                let dir_exists = path_exists(&runfiles_dir);
+                if manifest.is_some() || dir_exists {
+                    let has_manifest = manifest.is_some();
                     return Some(Self {
-                        mode: RunfilesMode::ManifestBased(manifest),
-                        manifest_path: Some(manifest_file_path),
-                        dir_path: Some(dir_path),
-                    });
-                }
-
-                // Try <executable>.runfiles directory
-                let runfiles_dir = String::from(exe_str) + ".runfiles";
-                if path_exists(&runfiles_dir) {
-                    return Some(Self {
-                        mode: RunfilesMode::DirectoryBased(runfiles_dir.clone()),
-                        manifest_path: None,
-                        dir_path: Some(runfiles_dir),
+                        manifest,
+                        manifest_path: if has_manifest {
+                            Some(manifest_file_path)
+                        } else {
+                            None
+                        },
+                        dir_path: if dir_exists {
+                            Some(runfiles_dir)
+                        } else {
+                            None
+                        },
                     });
                 }
             }
@@ -101,19 +96,43 @@ impl Runfiles {
             return None;
         }
 
-        match &self.mode {
-            RunfilesMode::ManifestBased(manifest) => resolve_manifest(manifest, path),
-            RunfilesMode::DirectoryBased(dir) => {
-                let mut result = dir.clone();
-                // Add separator if needed.
-                if !result.ends_with('/') && !result.ends_with(platform::SEP) {
-                    result.push(platform::SEP);
-                }
-                result.push_str(&platform::to_native_path(path));
-                Some(result)
-            }
+        if let Some(path) = self.directory_rlocation(path) {
+            return Some(path);
         }
+        if let Some(manifest) = &self.manifest {
+            return resolve_manifest(manifest, path);
+        }
+        self.dir_path
+            .as_ref()
+            .map(|dir| join_runfiles_path(dir, path))
     }
+
+    pub fn directory_rlocation(&self, path: &str) -> Option<String> {
+        let result = join_runfiles_path(self.dir_path.as_ref()?, path);
+        path_exists(&result).then_some(result)
+    }
+}
+
+fn join_runfiles_path(dir: &str, path: &str) -> String {
+    let mut result = String::from(dir);
+    if !result.ends_with('/') && !result.ends_with(platform::SEP) {
+        result.push(platform::SEP);
+    }
+    result.push_str(&platform::to_native_path(path));
+    result
+}
+
+fn runfiles_dir_from_manifest(path: &str) -> Option<String> {
+    if path == "MANIFEST" {
+        return Some(String::from("."));
+    }
+    if let Some(prefix) = path.strip_suffix(".runfiles_manifest") {
+        return Some(String::from(prefix) + ".runfiles");
+    }
+    if let Some(prefix) = path.strip_suffix("/MANIFEST") {
+        return Some(String::from(prefix));
+    }
+    path.strip_suffix("\\MANIFEST").map(String::from)
 }
 
 pub(crate) fn path_exists(path: &str) -> bool {
