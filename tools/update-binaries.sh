@@ -66,7 +66,7 @@ def main():
 
     # Replace the release tag in all download URLs
     content = re.sub(
-        r"(releases/download/)binaries-\d{8}/",
+        r"(releases/download/)binaries-\d{8}(?:-\d+)?/",
         rf"\1{tag}/",
         content,
     )
