@@ -80,7 +80,9 @@ def _impl(ctx):
         arg = "--verbose", embedded_args = embedded, transformed_args = transformed)
     launcher.compile_stub(
         ctx = ctx, embedded_args = embedded, transformed_args = transformed,
-        output_file = exe, cfg = "target")  # or cfg = "exec"
+        output_file = exe,
+        executable_relative_fallbacks = {0: "../bin/tool"},
+        cfg = "target")  # or cfg = "exec"
     ...
 ```
 
@@ -91,7 +93,7 @@ def _impl(ctx):
 | `append_embedded_arg(arg, …)` | Append a literal string argument. |
 | `append_raw_transformed_arg(arg, …)` | Append a string argument marked for resolution. |
 | `to_rlocation_path(file)` | Convert a `File` to its rlocation path string. |
-| `compile_stub(ctx, embedded_args, transformed_args, output_file, cfg, template_exec_group, template_file)` | Run the finalizer to emit the launcher. `cfg` is `"target"` (default) or `"exec"`. |
+| `compile_stub(ctx, embedded_args, transformed_args, output_file, executable_relative_fallbacks, cfg, template_exec_group, template_file)` | Run the finalizer to emit the launcher. `executable_relative_fallbacks` maps transformed argument indices to executable-relative paths. `cfg` is `"target"` (default) or `"exec"`. |
 
 Declare the relevant toolchains on your rule:
 
@@ -166,9 +168,11 @@ For an argument with `--fallback N=PATH`, the runfiles result wins only when it
 exists. Otherwise the launcher joins `PATH` to the parent of its OS-reported
 executable path, converts separators for the target platform, and requires the
 result to exist. The join preserves `..` components and does not depend on the
-current working directory. Unix uses the path through which the launcher was
-invoked, including a symlinked directory. Windows uses the physical image path
-reported by `QueryFullProcessImageNameW`. Before Windows filesystem and process
+current working directory. The launcher does not copy or own the fallback
+target; callers are responsible for keeping that path valid with the launcher.
+Unix uses the path through which the launcher was invoked, including a symlinked
+directory. Windows uses the physical image path reported by
+`QueryFullProcessImageNameW`. Before Windows filesystem and process
 APIs consume an absolute DOS or UNC path, the launcher normalizes it to
 `\\?\C:\...` or `\\?\UNC\server\share\...` form. This avoids `MAX_PATH`
 without depending on host policy or an application manifest; the complete child
@@ -233,8 +237,8 @@ Cross-compilation is handled entirely by Bazel via `rules_rs` and LLVM toolchain
 bash tools/build-release-binaries.sh artifacts
 
 # Tests
-bazel test //integration-tests:integration_test   # finalize + run on the host platform
-(cd e2e/bzlmod && bazel test //...)                # launcher_binary wrapping cc/go/py/sh
+bazel test //integration-tests:tests  # runtime integration + low-level Starlark fallback API
+(cd e2e/bzlmod && bazel test //...)   # launcher_binary wrapping cc/go/py/sh
 ```
 
 `flake.nix` provides a dev shell (Rust, Wine for Windows testing, gdb).
