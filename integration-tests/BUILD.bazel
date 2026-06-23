@@ -1,5 +1,7 @@
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@bazel_skylib//rules:native_binary.bzl", "native_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load(":starlark_fallback.bzl", "starlark_fallback")
 
 config_setting(
     name = "linux_x86_64",
@@ -139,6 +141,20 @@ copy_to_directory(
     ],
 )
 
+starlark_fallback(
+    name = "starlark-fallback",
+    data = ":test-binaries",
+    fallback_path = select({
+        ":windows": "test-binaries/print-env.exe",
+        "//conditions:default": "test-binaries/print-env",
+    }),
+)
+
+native_test(
+    name = "starlark_fallback_test",
+    src = ":starlark-fallback",
+)
+
 rust_test(
     name = "integration_test",
     srcs = ["src/main.rs"],
@@ -161,7 +177,15 @@ rust_test(
         ":release-template",
         ":test-binaries",
     ],
-    deps = ["@rules_rust//rust/runfiles"],
     edition = "2021",
     use_libtest_harness = False,
+    deps = ["@rules_rust//rust/runfiles"],
+)
+
+test_suite(
+    name = "tests",
+    tests = [
+        ":integration_test",
+        ":starlark_fallback_test",
+    ],
 )

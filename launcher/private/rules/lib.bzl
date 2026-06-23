@@ -41,12 +41,16 @@ def _append_raw_transformed_arg(*, arg, embedded_args, transformed_args):
     embedded_args.append(arg)
     return embedded_args, transformed_args
 
-def _compile_stub(*, ctx, embedded_args, transformed_args, output_file, cfg = "target", template_exec_group = None, template_file = None):
+def _compile_stub(*, ctx, embedded_args, transformed_args, output_file, executable_relative_fallbacks = {}, cfg = "target", template_exec_group = None, template_file = None):
     template = _get_template(ctx, cfg = cfg, template_exec_group = template_exec_group, template_file = template_file)
     args = ctx.actions.args()
     args.add("--template", template)
     args.add("-o", output_file)
     args.add_joined("--transform", transformed_args, join_with = ",")
+    args.add_all(
+        ["{}={}".format(index, path) for index, path in sorted(executable_relative_fallbacks.items())],
+        before_each = "--fallback",
+    )
     args.add("--")
     args.add_all(embedded_args)
     ctx.actions.run(
