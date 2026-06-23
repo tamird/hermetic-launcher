@@ -588,9 +588,10 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     let test_dir = config.work_dir.join("test_directory_precedes_manifest");
     fs::create_dir_all(&test_dir).map_err(|e| format!("Failed to create test dir: {}", e))?;
 
-    let mut runfiles = RunfilesSetup::new(&test_dir, "precedence_stub")
+    let stub_name = format!("precedence_stub{}", EXE_EXT);
+    let mut runfiles = RunfilesSetup::new(&test_dir, &stub_name)
         .map_err(|e| format!("Failed to create runfiles: {}", e))?;
-    runfiles.manifest_path = test_dir.join("precedence_stub.runfiles_manifest");
+    runfiles.manifest_path = test_dir.join(format!("{}.runfiles_manifest", stub_name));
     let executable_rlocation = format!("{}/bin/tool{}", WORKSPACE_NAME, EXE_EXT);
     let print_env_binary = config.test_binaries_dir.join(format!("print-env{}", EXE_EXT));
     runfiles
@@ -607,7 +608,7 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to write conflicting manifest: {}", e))?;
 
-    let stub_path = test_dir.join(format!("precedence_stub{}", EXE_EXT));
+    let stub_path = test_dir.join(&stub_name);
     finalize_stub(
         config,
         &stub_path,
@@ -652,6 +653,33 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
             "Explicit runfiles directory did not win over manifest.\nstdout: {}\nstderr: {}",
             stdout, stderr
         ));
+    }
+
+    #[cfg(windows)]
+    {
+        let mut command = Command::new(&stub_path);
+        command
+            .env("Java_Runfiles", "")
+            .env("Runfiles_Dir", "")
+            .env("Runfiles_Manifest_File", "");
+        let output = command.output().map_err(|e| {
+            format!("Failed to run stub with mixed-case empty variables: {}", e)
+        })?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success()
+            || !stdout.contains("ARGC:3")
+            || !stdout.contains(&expected_dir)
+            || !stdout.contains(&expected_manifest)
+            || stdout.contains("ALL_ENV:Java_Runfiles=")
+            || stdout.contains("ALL_ENV:Runfiles_Dir=")
+            || stdout.contains("ALL_ENV:Runfiles_Manifest_File=")
+        {
+            return Err(format!(
+                "Mixed-case inherited variables were not replaced.\nstdout: {}\nstderr: {}",
+                stdout, stderr
+            ));
+        }
     }
 
     let in_tree_manifest = runfiles.runfiles_dir.join("MANIFEST");
