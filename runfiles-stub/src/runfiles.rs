@@ -13,6 +13,7 @@ use crate::platform;
 pub struct Runfiles {
     manifest: Option<Manifest>,
     physical_dir_path: Option<String>,
+    logical_dir_path: Option<String>,
     // Paths for environment variables (when export_runfiles_env is true)
     pub manifest_path: Option<String>, // RUNFILES_MANIFEST_FILE
     pub dir_path: Option<String>,      // RUNFILES_DIR and JAVA_RUNFILES
@@ -53,6 +54,7 @@ impl Runfiles {
             return Some(Self {
                 manifest,
                 physical_dir_path,
+                logical_dir_path: None,
                 manifest_path,
                 dir_path,
             });
@@ -77,6 +79,11 @@ impl Runfiles {
                 let dir_exists = path_exists(&runfiles_dir);
                 if manifest.is_some() || dir_exists {
                     let has_manifest = manifest.is_some();
+                    let logical_dir_path = if has_manifest {
+                        Some(runfiles_dir.clone())
+                    } else {
+                        None
+                    };
                     let physical_dir_path = if dir_exists {
                         Some(runfiles_dir)
                     } else {
@@ -85,6 +92,7 @@ impl Runfiles {
                     return Some(Self {
                         manifest,
                         physical_dir_path: physical_dir_path.clone(),
+                        logical_dir_path,
                         manifest_path: if has_manifest {
                             Some(manifest_file_path)
                         } else {
@@ -125,8 +133,7 @@ impl Runfiles {
         if let Some(path) = self.directory_rlocation(path) {
             return Some(path);
         }
-        let dir = runfiles_dir_from_manifest(self.manifest_path.as_deref()?)?;
-        Some(join_runfiles_path(&dir, path))
+        Some(join_runfiles_path(self.logical_dir_path.as_ref()?, path))
     }
 }
 
