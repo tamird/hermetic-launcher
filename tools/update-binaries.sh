@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Update launcher/private/extensions.bzl with the latest prebuilt binaries from GitHub.
-# Usage: bazel run //tools:update-binaries [-- --tag binaries-YYYYMMDD]
+# Usage: bazel run //tools:update-binaries [-- --repo owner/repo --tag binaries-YYYYMMDD]
 set -euo pipefail
 python3 - "$@" <<'PYEOF'
 """Update launcher/private/extensions.bzl with the latest prebuilt binaries from GitHub."""
 import json, os, re, sys, urllib.request
 
-REPO = "hermeticbuild/hermetic-launcher"
+DEFAULT_REPO = "hermeticbuild/hermetic-launcher"
 TAG_PREFIX = "binaries-"
 EXTENSIONS_BZL = "launcher/private/extensions.bzl"
 
@@ -23,6 +23,11 @@ def fetch(url, token=None):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--repo",
+        default=DEFAULT_REPO,
+        help="GitHub repository containing the binary release",
+    )
     parser.add_argument("--tag", help="Use this specific release tag instead of the latest")
     args = parser.parse_args()
 
@@ -34,11 +39,11 @@ def main():
         tag = args.tag
         print(f"Using tag: {tag}", flush=True)
         release = json.loads(fetch(
-            f"https://api.github.com/repos/{REPO}/releases/tags/{tag}", token))
+            f"https://api.github.com/repos/{args.repo}/releases/tags/{tag}", token))
     else:
         print("Fetching releases...", flush=True)
         releases = json.loads(fetch(
-            f"https://api.github.com/repos/{REPO}/releases?per_page=30", token))
+            f"https://api.github.com/repos/{args.repo}/releases?per_page=30", token))
         candidates = sorted(
             [r for r in releases if r["tag_name"].startswith(TAG_PREFIX)],
             key=lambda r: r["tag_name"],
@@ -66,8 +71,9 @@ def main():
 
     # Replace the release tag in all download URLs
     content = re.sub(
-        r"(releases/download/)binaries-\d{8}(?:-\d+)?/",
-        rf"\1{tag}/",
+        r"https://github.com/[^/]+/[^/]+/releases/download/"
+        r"binaries-\d{8}(?:-\d+)?/",
+        f"https://github.com/{args.repo}/releases/download/{tag}/",
         content,
     )
 
