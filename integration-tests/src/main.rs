@@ -680,6 +680,8 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
 
     #[cfg(windows)]
     {
+        let expected_native_dir = expected_dir.replace('/', "\\");
+        let expected_native_manifest = expected_manifest.replace('/', "\\");
         let mut command = Command::new(&stub_path);
         command
             .env("Java_Runfiles", "")
@@ -692,8 +694,8 @@ fn test_directory_precedes_manifest(config: &TestConfig) -> Result<(), String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !output.status.success()
             || !stdout.contains("ARGC:3")
-            || !stdout.contains(&expected_dir)
-            || !stdout.contains(&expected_manifest)
+            || !stdout.contains(&expected_native_dir)
+            || !stdout.contains(&expected_native_manifest)
             || stdout.contains("ALL_ENV:Java_Runfiles=")
             || stdout.contains("ALL_ENV:Runfiles_Dir=")
             || stdout.contains("ALL_ENV:Runfiles_Manifest_File=")
