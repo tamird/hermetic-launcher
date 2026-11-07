@@ -27,9 +27,12 @@ def _launcher_binary_impl(ctx):
             # User-specified transformed args.
             transformed_args = [str(arg) for arg in ctx.attr.transformed_args]
 
+    location_targets = [ctx.attr.entrypoint] + ctx.attr.data
+    if ctx.attr.required_runfile:
+        location_targets.append(ctx.attr.required_runfile)
     for arg in ctx.attr.embedded_args:
         embedded_args, transformed_args = launcher.append_embedded_arg(
-            arg = ctx.expand_location(arg, targets = [ctx.attr.entrypoint] + ctx.attr.data),
+            arg = ctx.expand_location(arg, targets = location_targets),
             embedded_args = embedded_args,
             transformed_args = transformed_args,
         )
@@ -39,10 +42,11 @@ def _launcher_binary_impl(ctx):
         embedded_args = embedded_args,
         transformed_args = transformed_args,
         output_file = exe,
+        required_runfile = ctx.file.required_runfile,
     )
 
     runfiles = ctx.runfiles(
-        files = [ctx.executable.entrypoint] + ctx.files.data,
+        files = [ctx.executable.entrypoint] + ctx.files.data + ctx.files.required_runfile,
     )
     transitive_runfiles = []
     for runfiles_attr in (
@@ -147,6 +151,15 @@ embedded_args = [
     "--mode=production",               # Literal string, not transformed
 ]
 ```
+""",
+        ),
+        "required_runfile": attr.label(
+            allow_single_file = True,
+            doc = """A runfile whose path must exist in the chosen directory or manifest.
+
+A packaged program can inherit runfiles from a parent that does not depend on it.
+If the inherited sources lack this file, the launcher looks beside its executable.
+The selected source supplies both the embedded arguments and the child's environment.
 """,
         ),
         "transformed_args": attr.int_list(

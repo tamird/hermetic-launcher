@@ -60,6 +60,7 @@ process so it can use Bazel's runfiles libraries.
 | `entrypoint` | label (required) | Executable to run. Always resolved through runfiles. |
 | `embedded_args` | string list | Arguments baked into the binary. Support location expansion; any `$(rlocationpath …)` / `$(rlocationpaths …)` arg is auto-marked for runfiles resolution. |
 | `data` | label list | Runtime files; included in the launcher's runfiles tree. |
+| `required_runfile` | label | A runfile that must resolve to an existing path (including a directory artifact). If the parent’s runfiles lack it, look beside the launcher. |
 | `transformed_args` | int list | Indices of args to resolve through runfiles (`0` = entrypoint, `1` = first `embedded_args` entry, …). Default `[]` auto-detects (entrypoint + `$(rlocationpath …)` args). An explicit list **replaces** the default — include `0` to keep resolving the entrypoint. `[-1]` disables all resolution. |
 
 ### Low-level rule API
@@ -85,7 +86,7 @@ def _impl(ctx):
 | `.runfiles(*files)` | Append `File`s, each marked for runfiles resolution. |
 | `.embedded_args(*args)` | Append literal string arguments. |
 | `.raw_transformed_args(*args)` | Append string arguments marked for runfiles resolution (for paths not backed by a `File`). |
-| `.compile(ctx, output_file, cfg, template_exec_group, template_file)` | Run the finalizer and emit the launcher. `cfg` is `"target"` (default) or `"exec"`. |
+| `.compile(ctx, output_file, cfg, template_exec_group, template_file, required_runfile)` | Run the finalizer and emit the launcher. `cfg` is `"target"` (default) or `"exec"`. Pass a `File` as `required_runfile` to check a parent’s runfiles before inheriting them. Include that file in your rule’s runfiles. |
 
 The builder is a thin wrapper over a set of functional helpers, which remain available
 for cases that need direct control over the `(embedded_args, transformed_args)` lists:
